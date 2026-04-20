@@ -1,0 +1,40 @@
+title: onisin OS Documentation
+description: An AI-first platform for building data-driven enterprise applications
+baseurl: ""
+url: "https://docs.onisin.com"
+favicon_ico: "/icons/icon.ico"
+
+remote_theme: just-the-docs/just-the-docs
+
+lang: en
+
+# Navigation
+nav_sort: case_insensitive
+
+# Aux links (top right)
+aux_links:
+  "onisin.com":
+    - "https://onisin.com"
+
+# Footer
+footer_content: "© 2026 Frank &amp; Tristan von Schrenk"
+
+# Search
+search_enabled: true
+search_tokenizer_separator: /[\s\-_]+/
+
+# Code highlighting
+kramdown:
+  syntax_highlighter_opts:
+    block:
+      line_numbers: false
+
+plugins:
+  - jekyll-remote-theme
+
+# Exclude from processing
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - "*.sh"
+  - README.md
