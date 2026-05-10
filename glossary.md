@@ -1,126 +1,89 @@
 ---
 layout: default
 title: Glossary
-nav_order: 11
+nav_order: 9
 ---
 
 # Glossary
 
-The vocabulary you'll meet throughout the OOS documentation and code.
+**agent** — The ReAct loop running inside oos or oosd that turns
+natural language into tool calls (schema search, GraphQL queries,
+DSL saves) and assembles the result into a response.
 
-### AST (Abstract Syntax Tree)
-The parsed, in-memory form of a set of context files. The GraphQL
-schema, the permission matrix and the AI-facing schema chunks are
-all derived from the AST.
+**backfill** — The process oosai runs on startup to embed any domain,
+view, global prompt or event records that are not yet represented in
+the vector store.
 
-### chunk (schema chunk)
-A plain-text description of one context, rendered from the AST for
-the AI assistant to read. Every chunk contains the context name,
-the query shape, the filter examples, meta queries, and permissions.
-Chunks live in `oos.oos_schema` along with their embeddings.
+**domain** — A named description of one data entity. Written in the
+domain DSL (`.domain`). Describes the database table, fields, types,
+permissions, relations, meta sources and AI hints. The source of
+truth for everything OOS generates: GraphQL schema, LLM chunks, UI.
 
-### collection
-A context whose `kind="collection"`. It represents a list of records —
-a table view, essentially. By convention, collection names end in
-`_list`.
+**domain chunk** — The plain-text representation of a domain, produced
+by `renderLLMChunk` in `packages/oos-dsls-ts`. Embedded as a vector
+and used for semantic retrieval by the agent.
 
-### context
-The core unit of OOS. A context is an addressable view onto your data,
-either a collection (list) or an entity (single record). Contexts are
-declared in XML, live in `oos.ctx`, and drive the GraphQL schema, the
-screen rendering and the AI's knowledge of what exists.
+**event** — One row in an event source table. Events are inserted via
+`oos.cmd.event.insert`, embedded by oosai, and searchable by
+semantic similarity.
 
-### CTX
-Shorthand for a context definition file — the XML document stored in
-`oos.ctx`. Sometimes the word is also used for the DB table itself.
+**event mapping** — A named configuration (`oos.event_mappings`) that
+connects a source table to the event system and lists which event
+type grammars it accepts.
 
-### DSL
-Short for Domain-Specific Language. OOS has two of them:
-- **Context DSL** — the XML for describing entities, fields,
-  permissions and relations. See [writing contexts](./writing-contexts.html).
-- **Screen DSL** — the XML for describing UI layouts, forms,
-  tables and widgets. See [designing screens](./designing-screens.html).
+**event stream** — A named context within a mapping, typically a case
+file, session or thread. Identified by a stream ID
+(e.g. `fall-2024-0042`).
 
-### eino
-The Go agent framework we use inside the client for the ReAct-style
-AI assistant. Provides the tool-calling loop, the message history
-and the model interface.
+**event type grammar** — A DSL source in `oos.event_type_grammar` that
+describes one class of event: required/optional fields, context tags
+and examples. Edited in oosd's Event Types panel.
 
-### entity
-A context whose `kind="entity"`. It represents a single record with
-all its fields visible for viewing and editing. By convention, entity
-names end in `_detail`.
+**global prompt** — A row in `oos.global_prompt`. Every global prompt
+is injected verbatim into the LLM system prompt on every turn.
+Used for standing instructions: deletion policy, filter conventions,
+response style, permission reminders.
 
-### envelope
-The JSON shape oosp returns when the client asks for a screen to
-render: a `content` section with the record data, a `meta` section
-with dropdown options, and a `dsl` section with the screen layout.
-The client loads all three into the state at once.
+**knowledge sandwich** — The system prompt design used in oos. Global
+standing instructions and the domain index form the stable outer
+layers; on-demand schema chunks retrieved by `oos_schema_search`
+fill the middle as the agent works.
 
-### Fyne
-The Go GUI toolkit the desktop client is built on. Native windows,
-native input, rendered through Skia on the GPU. Not a webview.
+**meta source** — A lookup table backing a dropdown field. Declared in
+the domain with the `meta` keyword. Loaded by oosgql to populate
+dropdown options.
 
-### GraphQL
-How the client talks to oosp about data. The schema is generated from
-the context AST at runtime, which means it always reflects the current
-definitions — add a field to a context and it appears in the schema
-on the next save.
+**NATS** — The message bus used for all inter-service communication.
+OOS uses NATS Request-Reply exclusively. All clients only need a
+NATS URL; they do not know the addresses of individual services.
 
-### granite embedding
-The embedding model we use to turn schema chunks into vectors for
-retrieval. IBM's granite-embedding line; small, fast, good enough for
-the chunk-matching problem. Runs wherever your OpenAI-compatible
-endpoint runs.
+**oosai** — The embedding and command hub. Handles all NATS subjects,
+maintains the vector store, drives the event embedding pipeline, and
+proxies GraphQL calls to oosgql.
 
-### IAM
-Identity and access management. OOS authenticates through OIDC, uses
-PKCE, and assumes a separate identity provider — we develop against
-Zitadel.
+**oosd** — The designer desktop app. Used by developers to write domain
+and view DSL files, manage event type grammars, and install the demo
+dataset.
 
-### meta / meta table
-A reference list used to populate dropdowns. Declared inside an
-entity context with `<meta name="roles" table="role" .../>`. At
-runtime oosp exposes a `meta_<n>` GraphQL query that returns
-`{value, label}` pairs.
+**oosgql** — The GraphQL gateway. Builds a live GraphQL schema from
+domain definitions and executes queries and mutations against
+PostgreSQL.
 
-### oos
-The desktop client. Fyne-based. Owns the UI, the chat with the
-assistant, and the user's session.
+**oos** — The chat desktop app. End users query and edit data in
+natural language through a local ReAct agent.
 
-### oosp
-The backend. Serves GraphQL, manages the context and screen
-definitions, keeps the schema chunks up to date, exposes the AI
-tools as REST endpoints.
+**pgvector** — A PostgreSQL extension for storing and querying
+embedding vectors. Used by oosai for domain chunks, global prompt
+chunks and event embeddings.
 
-### ooso
-The synthetist. The authoring tool for context and screen
-definitions, with GUI and CLI modes.
+**ReAct** — Reasoning + Acting. The agent loop pattern: ask LLM,
+if it requests tools run them, append results, repeat. Used in both
+oos and oosd.
 
-### pgvector
-The PostgreSQL extension OOS uses by default for vector similarity
-search over schema chunks. Any compatible vector backend also works,
-but pgvector keeps the stack to a single database.
+**renderLLMChunk** — The function in `packages/oos-dsls-ts` that
+converts a `DomainDef` into a structured plain-text block for
+embedding. Output is deterministic and versioned.
 
-### PKCE (Proof Key for Code Exchange)
-The OAuth flow OOS uses for authentication. Appropriate for desktop
-apps because it doesn't require a client secret on the device.
-
-### RAD (Rapid Application Development)
-The category OOS belongs to: tools that let you build full
-applications from high-level descriptions, with minimal hand-written
-code. OOS's twist is adding AI to the data-access layer.
-
-### ReAct
-A pattern for AI agents where the model alternates between thinking
-and acting (calling tools). OOS's assistant is a ReAct agent built
-on eino.
-
-### source
-A context attribute naming the underlying database table. Multiple
-contexts may share the same source — the demo has `person_list` and
-`person_detail` both with `source="person"`.
-
-### Zitadel
-The OIDC provider we develop against. OOS works with any standard
-OIDC provider; Zitadel is just what ships in our dev environment.
+**view** — A named description of how a domain is presented.
+Written in the view DSL (`.view`). Describes toolbar actions, table
+columns, form sections and widget bindings.

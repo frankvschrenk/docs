@@ -6,135 +6,66 @@ nav_order: 8
 
 # Security and roles
 
-OOS is built on the premise that access control is not an add-on. This
-page walks through how authentication flows through the system, how
-authorisation is declared per context, and where each check actually
-happens.
+## Permission declarations
 
-## Two layers: who are you, what may you do
+Every domain declares which roles may perform which actions:
 
-**Authentication** happens once, at login. OOS speaks OIDC and uses
-PKCE — you are redirected to your identity provider (we develop
-against Zitadel), you log in there, and OOS receives an ID token with
-your claims. There is no local user database; we are not in the
-password business.
-
-**Authorisation** happens on every request. Every context declares
-which roles may read it, write it and delete it. Both the client and
-the server consult that declaration independently.
-
-## Groups and roles
-
-After the ID token comes back, the client extracts the user's group
-memberships from the claims (primary path: the `groups` claim;
-fallbacks include Zitadel's project-roles claim and, for the dev
-environment, a username mapping).
-
-Groups are mapped to roles in `groups.xml`, stored alongside the
-context definitions:
-
-```xml
-<oos_groups>
-  <group name="oos-admin"   role="admin">
-    <include ctx="person.ctx.xml"/>
-    <include ctx="note.ctx.xml"/>
-  </group>
-  <group name="oos-manager" role="manager"> ... </group>
-  <group name="oos-user"    role="user">    ... </group>
-</oos_groups>
+```
+domain person from person@demo {
+  permission admin   read, write, delete
+  permission manager read, write
+  permission user    read
+  ...
+}
 ```
 
-One user may be in several groups. The client picks the one with the
-highest-priority role (admin > manager > user) and sends that group's
-name to oosp as the `X-OOS-Group` header. oosp resolves it back to a
-role and uses it to scope every response.
+Supported actions: `read`, `write`, `delete`.
 
-## Context-level permissions
+## Where permissions are enforced
 
-Every context lists which actions each role may perform:
+Permissions are enforced at two levels:
 
-```xml
-<permission role="admin"   actions="read,write,delete"/>
-<permission role="manager" actions="read,write"/>
-<permission role="user"    actions="read"/>
-```
+**System prompt** — the AI agent's system prompt includes the
+permission matrix for the current user's role. The LLM knows ahead
+of time what the user may do and will decline to propose mutations
+that exceed the user's rights. This is a convenience layer — it
+prevents the assistant from proposing operations that would fail.
 
-Three actions exist:
+**GraphQL layer (oosgql)** — every query and mutation is checked
+against the permission matrix before execution. The check is
+performed server-side by `packages/oos-gql-ts`. If the user's role
+does not have the required action on the requested domain, the
+request is rejected with an error — even if the client bypassed the
+LLM layer entirely.
 
-- **read** — query the context, open the detail screen, see the data.
-- **write** — insert or update records.
-- **delete** — remove records.
+The client-side and LLM-side permission awareness are therefore
+defence-in-depth. Compromising the client does not grant elevated
+database access.
 
-A context with *no* `<permission>` entries is treated as unrestricted.
-A context with *any* entry is in deny-by-default mode for every role
-not listed.
+## Role resolution
 
-## Where each check runs
+The user's role is resolved from the `X-OOS-Group` header on every
+request. In development, the demo falls back to a username mapping:
+`admin` → `oos-admin`, `user` → `oos-user`. For production, set the
+groups claim from your identity provider.
 
-### Client-side: informed UI and informed assistant
+## The permission matrix in the LLM prompt
 
-The client builds a permission matrix from the AST at session start —
-"for your role, here is what you may do in each context". Two things
-consume it:
+The `oos.global_prompt` table carries standing instructions for the
+LLM, including role-specific behaviour rules. For example, a prompt
+named `deletion` might instruct the LLM to always ask for confirmation
+before proposing a delete, and to only offer deletion to users whose
+role includes the `delete` action.
 
-1. The **AI assistant's system prompt** includes the matrix so the
-   assistant can give the user early, specific feedback: "your role
-   `user` can only read person_list; writing requires `manager` or
-   `admin`." This is behaviour, not enforcement.
-2. The **UI** uses the same matrix to decide which header buttons to
-   render. A user without `delete` permission does not see a delete
-   button on the entity screen.
+These instructions are data — edit a row in `oos.global_prompt` and
+the LLM's behaviour changes on the next message without restarting
+anything.
 
-The client's job here is polish. It tells the user what is and is
-not possible before they try it. But the client is also untrusted;
-nothing above stops a crafted request from reaching the server.
+## What OOS does not (yet) provide
 
-### Server-side: authoritative refusal
-
-Every mutation-class endpoint on oosp resolves the caller's role and
-checks it against the context's permission matrix before executing
-anything. Two endpoints do this today:
-
-- `POST /save` — the oos_save path. The context name is in the
-  request body. The check asks: "does this role have `write` on
-  this context?"
-- `POST /mutation` — the oos_mutation path. The mutation string
-  is parsed to extract the action (insert/update/delete) and the
-  context name. `insert` and `update` map to `write`; `delete` maps
-  to `delete`. The check asks: "does this role have <action> on
-  <context>?"
-
-If the check fails, the request returns HTTP 403 with an `error`
-body, and no resolver runs. If the mutation string cannot be parsed,
-the request returns 400 — we refuse to execute an unclassifiable
-mutation rather than guess.
-
-Read-path permissions (the `/query` endpoint) are not yet gated at
-the server level. The client's permission matrix hides the UI
-entrances, but a hand-crafted request could still retrieve data.
-This is acknowledged; it is on the roadmap.
-
-## Why two layers
-
-Two honest answers:
-
-1. **Usability.** The client knows the user's role immediately and
-   can shape the whole experience around it — which buttons to show,
-   what the assistant can offer, what to tell the user when they ask
-   for something out of reach. If this were server-only, every
-   disallowed action would become a round-trip and a red banner.
-2. **Trust.** The server cannot believe the client. A modified client
-   could claim any role, skip the UI gating, and send any request
-   directly. The server doesn't care what the client says it should be
-   allowed to do; it re-checks from the authoritative source.
-
-This is a standard pattern, but it's worth stating because it is easy
-to pick a side and do only one. Doing only the client means no real
-security. Doing only the server means a terrible user experience. Both
-together is the point.
-
-## What's next
-
-- [The AI assistant](./the-ai-assistant.html) — how the permission
-  matrix feeds into the system prompt.
-- [Running OOS](./running-oos.html) — IAM configuration.
+- OIDC / SSO integration — there is no built-in identity provider.
+  Authentication is expected to be handled by a reverse proxy or
+  gateway that sets the `X-OOS-Group` header.
+- Row-level security — permissions are per-domain, not per-row.
+  If a role has `read` on `person`, it can read all persons.
+- Vault / mTLS per-session credentials — planned for a future release.

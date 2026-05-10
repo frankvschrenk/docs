@@ -1,110 +1,93 @@
 ---
 layout: default
 title: How it works
-nav_order: 4
+nav_order: 2
 ---
 
 # How it works
 
-OOS has three long-running pieces and one authoring tool. Everything
-is written in Go. The glue between them is a small number of
-well-defined wire formats: GraphQL, REST+JSON, XML for definitions,
-and a vector store for the AI's schema retrieval.
+OOS has four long-running services and one authoring tool. The glue
+between them is **NATS** — all inter-service communication goes through
+NATS Request-Reply subjects. No service knows the address of another;
+every client only needs a NATS URL.
 
-## The long-running pieces
+## The services
 
-**oos** is the desktop client. It owns the UI, the chat with the AI
-assistant, and the user's session. It is a Fyne application — native
-windows, native menus, GPU-rendered via Skia. It talks to oosp over
-HTTPS, authenticates against an OIDC provider (we develop against
-Zitadel), and never touches a database directly.
+**oosgql** is the GraphQL gateway (port 4000). It reads domain
+definitions from the database, builds a live GraphQL schema, and
+handles queries and mutations. When a domain changes, a NATS
+notification triggers an instant schema rebuild — no restart needed.
 
-**oosp** is the backend. It owns the GraphQL schema, the context and
-screen definitions, the permission matrix, and the connection to the
-data sources. It serves the AI assistant's tools (query, save,
-schema_search, …) over REST. It keeps a vector store of schema chunks
-so the assistant can retrieve the right context for any
-natural-language request.
+**oosai** is the embedding and command hub (port 4100). It embeds
+domain and view definitions into pgvector for semantic retrieval,
+listens for incoming events and embeds those too, and exposes the full
+CRUD surface of OOS's internal tables as NATS subjects. Every NATS
+command the clients send — whether it is loading a domain, inserting an
+event or running a GraphQL proxy — is handled here.
 
-**PostgreSQL** is where everything lives. Data tables — the domain
-records your application is about. Meta tables — the reference lists
-behind dropdowns. And three OOS-internal tables: `oos.ctx` (context
-definitions as XML), `oos.dsl` (screen definitions as XML), and
-`oos.oos_schema` (the AI-facing schema chunks, with their embeddings).
+**oos** is the chat client (Electrobun + React). End users type natural
+language; a local ReAct agent loop turns that into schema lookups and
+GraphQL calls. The result is rendered as an interactive board.
 
-A **vector store** holds the embeddings of the schema chunks. OOS uses
-PostgreSQL with the `pgvector` extension by default; any compatible
-vector backend works.
+**oosd** is the designer (Electrobun + React). Developers write
+`.domain` and `.view` files, install the demo dataset, manage event
+type grammars and inspect event streams. It also hosts a chat window
+backed by its own ReAct agent that understands the DSL.
 
-## The authoring tool
+## The communication topology
 
-**ooso** is the synthetist — the authoring tool for context and screen
-definitions. It has a GUI for live editing and a CLI for batch imports.
-You use it when you are designing the system, not when you are running
-it.
-
-## The two data-flow pipelines
-
-Two things happen every time a context definition changes. Both start
-from the same row in `oos.ctx` and fan out:
-
-**Pipeline 1: GraphQL.** The context XML is parsed into an AST. From
-the AST, oosp builds the GraphQL schema. Queries, filters, inserts,
-updates, deletes — all generated, all reflecting exactly what your
-definition says. When you save a changed context, the schema rebuilds
-itself without a server restart.
-
-**Pipeline 2: AI-facing schema chunks.** The same AST is also rendered
-as plain-text chunks: one per context, describing its fields, its
-filter shape, its dropdown metadata, a full example query. The chunks
-are embedded using a granite embedding model and stored with their
-vectors in `oos.oos_schema`. When the assistant is asked something,
-it first finds the most relevant chunks by vector similarity, then
-uses them to construct a grounded query.
-
-## A typical request
-
-A user opens the chat and types *"zeig mir alle Berliner Kunden über
-50"*. What happens:
-
-1. The client sends the message to the AI assistant's session, which
-   already carries the user identity, the role, the permission matrix,
-   the global prompts, and (depending on strategy) the full schema or
-   a retrieval hint.
-2. The assistant picks the `person_list` context — either from the
-   embedded schema or by calling `oos_schema_search` for it.
-3. It builds a GraphQL query with the suffix-argument filters from
-   the schema: `{ person_list(city_like: "Berlin", age_gt: 50) { ... } }`.
-4. It calls the `oos_query` tool. oosp runs the query against the
-   configured data source and returns the rows.
-5. The board opens in the client with the result. The assistant
-   doesn't narrate — the data is the answer.
-
-A mutation request ("ändere die Rolle von Person 5 auf Manager") takes
-a different path: the assistant proposes a preview via
-`oos_ui_change_required`, the user confirms, and only then does
-`oos_ui_save` reach the backend. The mutation itself is built by
-oosp, not by the LLM.
-
-## Where permissions enter
-
-Every context declares what each role may do:
-
-```xml
-<permission role="admin"   actions="read,write,delete"/>
-<permission role="manager" actions="read,write"/>
-<permission role="user"    actions="read"/>
+```
+oos  ──NATS──▶ oosai  ──DB──▶  PostgreSQL + pgvector
+oosd ──NATS──▶ oosai
+               oosai  ──HTTP──▶ oosgql  (GQL proxy)
+               oosai  ──Embed──▶ Ollama (embedding model)
+oosgql  ──DB──▶  PostgreSQL
 ```
 
-The client reads this table into the AI's system prompt so the
-assistant knows ahead of time what the user is allowed to do — and
-can say so. The server reads the same table on every `/save` and
-`/mutation` request and rejects anything outside the role's rights.
-If the client is out of sync, misleading or compromised, the server
-still holds the line.
+Neither `oos` nor `oosd` has a database URL or a direct HTTP connection
+to any backend. They only need `nats://localhost:4222`.
 
-## What's next
+## A typical query
 
-- [Writing contexts](./writing-contexts.html) — the author's view.
-- [Designing screens](./designing-screens.html) — the designer's view.
-- [The AI assistant](./the-ai-assistant.html) — how the LLM is wired in.
+A user opens the oos chat and types _"show me all customers from
+Berlin"_. What happens:
+
+1. The agent calls `oos_schema_search` — oosai does a cosine search
+   over the embedded domain chunks and returns the `customer` context.
+2. The agent builds a GraphQL query using the field and filter
+   information in that chunk and calls `oos_query`.
+3. oosai forwards the query to oosgql via `oos.cmd.gql.query`.
+4. oosgql runs the query against PostgreSQL and returns the rows.
+5. oos renders the result as a board.
+
+## A typical domain change
+
+A developer edits `customer.domain` in oosd and saves it. What happens:
+
+1. oosd sends `oos.cmd.domain.save` via NATS to oosai.
+2. oosai writes the new source to `oos.domain` in the database.
+3. oosai publishes `oos.domain.changed`.
+4. oosai's notify listener picks up the change and re-embeds the domain chunk.
+5. oosgql's notify listener picks up the change and rebuilds the GraphQL schema.
+
+The running oos client picks up the fresh schema on its next query.
+
+## The database
+
+OOS uses PostgreSQL with the `pgvector` and `hstore` extensions.
+
+Internal tables live in the `oos` schema:
+
+| Table | Purpose |
+|---|---|
+| `oos.domain` | Domain DSL sources |
+| `oos.view` | View DSL sources |
+| `oos.global_prompt` | Standing instructions injected into every LLM system prompt |
+| `oos.event_type_grammar` | Grammar rules for event classification |
+| `oos.event_mappings` | Which event sources are active and which event types they accept |
+| `oos.event_streams` | Named event streams with context tags |
+| `oos.oos_domain_schema` | Embedded domain chunks (pgvector) |
+| `oos.oos_global_schema` | Embedded global prompt chunks (pgvector) |
+
+Application data lives in the `public` schema — whatever tables your
+domain definitions point to.

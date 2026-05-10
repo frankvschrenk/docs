@@ -4,46 +4,36 @@ title: Home
 nav_order: 1
 ---
 
-# onisin OS
+# onisin OS Documentation
 
-A platform for building data-driven enterprise applications without
-writing application code. You describe your data, you describe how it
-should look on screen, and onisin OS does the rest — it builds the
-GraphQL schema, renders the UI, and hands an AI assistant the context
-to help your users explore and edit that data in natural language.
+onisin OS (OOS) is an AI-first enterprise data system. You describe
+your data model in small declarative DSL files. From those files, OOS
+generates a live GraphQL schema, renders a desktop UI, and gives an AI
+assistant everything it needs to answer questions and edit records in
+natural language — all without touching a database directly.
 
-## Start here
+## The mental model
 
-New to onisin OS? Read in this order:
+A **domain** is the source of truth for one entity — say, `person`.
+It describes fields, types, permissions, relations and AI hints.
+A **view** describes how that domain is displayed: toolbar buttons,
+column layout, form widgets. Everything is derived from these two
+files.
 
-1. **[Foreword](./foreword.html)** — why we built this and which
-   trade-offs we made.
-2. **[What is onisin OS](./what-is-oos.html)** — the one-page tour.
-3. **[How it works](./how-it-works.html)** — the architecture and
-   data flow.
+When a domain changes, the whole stack reacts automatically:
 
-## Then pick what you need
+- **oosgql** rebuilds the GraphQL schema.
+- **oosai** re-embeds the domain chunk for AI retrieval.
+- The running UI picks up the change without a restart.
 
-- **[Writing contexts](./writing-contexts.html)** — describe your
-  data entities.
-- **[Designing screens](./designing-screens.html)** — describe the
-  UI.
-- **[The AI assistant](./the-ai-assistant.html)** — how the LLM
-  fits in.
-- **[Security and roles](./security-and-roles.html)** — IAM and
-  permissions.
-- **[Running onisin OS](./running-oos.html)** — setup and
-  configuration.
-- **[The toolbox](./the-toolbox.html)** — the authoring tool and
-  the MCP bridge.
+## Where to go from here
 
-## Reference
-
-- **[Glossary](./glossary.html)** — CTX, DSL, context, entity, and
-  the rest.
-- **[License](./license.html)** — the short version.
-
----
-
-onisin OS is under active development. When something here disagrees
-with the code, the code wins — open a ticket and we'll fix the docs.
+- [How it works](./how-it-works.html) — architecture and data flow.
+- [Components](./components.html) — each service explained.
+- [The DSL](./the-dsl.html) — writing `.domain` and `.view` files.
+- [The AI assistant](./the-ai-assistant.html) — how the LLM is wired in.
+- [The event system](./event-system.html) — event types, streams and mappings.
+- [Running OOS](./running-oos.html) — setup and startup order.
+- [Security and roles](./security-and-roles.html) — permissions.
+- [Glossary](./glossary.html) — terms used throughout the docs.
+- [License](./license.html) — BSL 1.1.

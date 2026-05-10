@@ -1,161 +1,138 @@
 ---
 layout: default
 title: Running OOS
-nav_order: 9
+nav_order: 7
 ---
 
 # Running OOS
 
-OOS is a native app plus a backend. This page walks through getting
-a working setup from a fresh clone.
-
 ## Prerequisites
 
-- **Go** 1.22 or newer.
-- **PostgreSQL** 14 or newer, with the **pgvector** extension.
-  Used for OOS-internal state (`oos.*` schemas), the schema-chunk
-  embeddings, and optionally your application data.
-- An **LLM endpoint** that speaks OpenAI-compatible chat completions.
-  For development we use Ollama with Gemma; for deployment, any
-  OpenAI-compatible provider works.
-- An **OIDC provider**. We develop against Zitadel. Keycloak works
-  the same way; hosted providers (Auth0, Okta) also work as long as
-  they speak standard OIDC with PKCE.
-- macOS, Linux or Windows for the desktop client.
+- **Bun** ≥ 1.2
+- **PostgreSQL** ≥ 14 with the `pgvector` and `hstore` extensions
+- **NATS Server** — `brew install nats-server` on macOS
+- **Ollama** with a tools-capable chat model (e.g. `llama3.1`,
+  `qwen2.5`) and the `granite-embedding:latest` embedding model
+- An OpenAI-compatible LLM endpoint (Ollama is fine for local work)
 
-Supported data sources today: **PostgreSQL**, **Oracle** and
-**MariaDB** — plus any other backend you wire up behind the same
-datasource interface.
-
-## The repository layout
+## Repository layout
 
 ```
 onisin/
-├── oos/         desktop client (Fyne)
-├── oosp/        backend (REST + GraphQL)
-├── oos-common/  shared: AST, GraphQL builder, plugin transport
-├── oos-dsl/     DSL runtime for screens
-├── oos-dsl-base/ DSL parser and nodes
-├── oos-run/     installer and seed
-├── ooso/        synthetist (CTX/DSL authoring)
-├── oos.xsd      schema for context files
-└── setup.toml   runtime configuration
+├── apps/
+│   ├── oos/       — chat client (Electrobun)
+│   ├── oosd/      — designer (Electrobun)
+│   ├── oosgql/    — GraphQL gateway (Bun + Hono, port 4000)
+│   └── oosai/     — embedding + command hub (Bun + Hono, port 4100)
+├── packages/
+│   ├── oos-dsls-ts/   — Langium grammar, parsers, LLM chunk renderer
+│   ├── oos-gql-ts/    — GraphQL schema builder, resolvers, permissions
+│   ├── oos-embed-ts/  — embedding client, pgvector helpers
+│   └── oos-ui-ts/     — shared React UI primitives
+├── oosfs/         — Go MCP server for repo tooling
+├── demo.toml      — local DB config (used by oosfs MCP tools)
+└── package.json   — Bun workspace root
 ```
 
-## Configuration — setup.toml
-
-Every binary reads the same `setup.toml`. The interesting sections:
-
-```toml
-[oosp]
-addr = "127.0.0.1:9100"
-dsn  = "postgres://oosp:...@localhost/onisin"
-
-[oosp.datasources.demo]
-type     = "postgres"
-host     = "localhost"
-database = "demo"
-user     = "demo"
-password = "..."
-
-[oosp.vector]
-backend = "pgvector"
-dsn     = "postgres://oosp:...@localhost/onisin"
-
-[oosp.llm]
-url         = "http://localhost:11434"
-embed_model = "granite-embedding"
-
-[oos]
-oosp_url = "http://localhost:9100"
-
-[iam]
-issuer_url = "https://your-zitadel/oauth/v2"
-client_id  = "..."
-scope      = "openid profile email groups"
-```
-
-## First-time setup
-
-Start Postgres (with pgvector enabled). Then:
+## Install dependencies
 
 ```bash
-make build               # builds oos, oosp, ooso
-./dist/oosp              # start the backend
-./dist/oos-run_macos --install --zip staging/macos.zip  # install the client
+bun install
 ```
 
-The installer puts `oos` and the supporting tools into
-`~/.local/bin` (or the platform equivalent). It's the path that lets
-you run `oos` from anywhere.
+Run this once at the repo root. Bun installs all workspace packages
+in one pass.
 
-## Seeding
+## Configuration
 
-A fresh database is empty. To populate it with the demo (a `person`
-context and a `note` context, plus the permissions, screens, global
-prompts):
+Each service reads environment variables with sane defaults for local
+development. For production, set them explicitly.
+
+**oosgql** (`apps/oosgql/src/config.ts`):
+
+| Variable | Default | Description |
+|---|---|---|
+| `OOSGQL_PORT` | `4000` | HTTP port |
+| `OOSGQL_PG_URL` | `postgres://postgres:demo@localhost:5432/onisin` | Database URL |
+| `OOSGQL_NATS_URL` | `nats://localhost:4222` | NATS URL |
+
+**oosai** (`apps/oosai/src/config.ts`):
+
+| Variable | Default | Description |
+|---|---|---|
+| `OOSAI_PORT` | `4100` | HTTP port |
+| `OOSAI_PG_URL` | `postgres://postgres:demo@localhost:5432/inisin` | Database URL |
+| `OOSAI_NATS_URL` | `nats://localhost:4222` | NATS URL |
+| `OOSAI_EMBED_URL` | `http://localhost:11434` | Ollama base URL |
+| `OOSAI_EMBED_MODEL` | `granite-embedding:latest` | Embedding model |
+| `OOSAI_GQL_URL` | `http://localhost:4000` | oosgql base URL |
+
+## Startup order
+
+Services are independent but the event system's backfill requires the
+database schema to exist before oosai starts. Safe order:
 
 ```bash
-./dist/oosp --seed
+# 1. Infrastructure
+nats-server
+
+# 2. Backend services (separate terminals)
+cd apps/oosgql && bun run dev
+cd apps/oosai  && bun run dev
+
+# 3. Apps
+cd apps/oosd && bun run dev   # designer
+cd apps/oos  && bun run dev   # chat client
 ```
 
-The seeder writes into `oos.ctx` and `oos.dsl`. oosp listens for
-changes and regenerates the GraphQL schema and the AI-facing chunks
-automatically — no restart needed.
+`oosgql` and `oosai` can start in any order relative to each other.
 
-If you already have data in `oos.oos_schema` and want a clean
-rebuild:
+## Installing the demo
 
-```sql
-TRUNCATE oos.oos_schema;
-```
+The demo dataset provides two domains (`person`, `note`), reference
+tables, 10 persons, 12 notes, and police and support event data. It
+is installed from inside oosd:
 
-Then restart oosp and the backfill regenerates every chunk.
+1. Open oosd.
+2. Go to **Settings** → set the NATS URL if needed (`nats://localhost:4222`).
+3. Go to **Demo**.
+4. Click **Install internal schema** — writes all `oos.*` tables.
+5. Click **Install demo tables and data** — writes the `public` schema,
+   reference tables, persons, notes, events, and all DSL sources.
 
-## Running the client
+Both steps are idempotent. Re-running resets the demo data.
+
+**Important:** oosai must be running before you install the demo.
+The installer triggers event embedding; if oosai is not listening,
+the events are inserted but not embedded.
+
+## Verifying the setup
+
+After the demo is installed, check that the services are healthy:
 
 ```bash
-oos
+curl http://localhost:4000/health  # oosgql → {"status":"ok"}
+curl http://localhost:4100/health  # oosai  → {"status":"ok","embedModel":"..."}
 ```
 
-The client opens a login window, redirects you to your OIDC provider,
-receives the token, and establishes a session. You'll see the
-dashboard — activity panel on the right, board area in the middle,
-AI chat in its own tab.
+Open oos, type _"show me all persons"_ in the chat. The agent should
+respond with a board of person records within 2–3 seconds.
 
-## Tearing down
+## Common issues
 
-Because the system state is almost entirely in Postgres, cleanup is
-a database operation:
+**"NATS connection refused"** — `nats-server` is not running or the
+URL in settings is wrong. Default is `nats://localhost:4222`.
 
-```sql
-DROP SCHEMA oos CASCADE;
-```
+**"No domains found"** — the internal schema is not installed. Go to
+oosd → Demo → Install internal schema.
 
-followed by a seed cycle to put the defaults back.
+**Empty boards in oos** — the demo data is not installed, or oosai
+could not embed the domains. Check the oosai terminal output for
+errors.
 
-## What about credentials for data sources?
+**Events not embedded** — oosai was not running when the demo was
+installed. Re-run Install demo tables and data with oosai running.
 
-If you configure Vault (`[iam.vault]`), OOS can fetch per-session
-certificates using the user's JWT for mutual TLS against your
-databases. This means the user's identity travels with every SQL
-statement, not just the session-wide shared credential. The dev
-environment does not require Vault; `[unsecure_mode] = true` skips
-the whole dance.
-
-## Common gotchas
-
-- **Client can't reach oosp.** Check `[oos] oosp_url` and that oosp
-  is actually listening. `curl http://localhost:9100/health` should
-  return `{"status":"healthy"}`.
-- **No groups in JWT.** The demo falls back to username mapping:
-  `admin` → `oos-admin`, `user` → `oos-user`. For production,
-  configure the groups claim in your IAM.
-- **Dropdowns empty.** The meta tables (role, department, city,
-  etc.) are expected to exist in your demo database with the
-  columns declared in the `<meta>` elements of the context file.
-
-## What's next
-
-- [The toolbox](./the-toolbox.html) — the ooso authoring tool.
-- [Security and roles](./security-and-roles.html) — the IAM details.
+**oosgql schema is stale** — a domain was saved but oosgql did not
+rebuild. Check that NATS is running and that oosgql logged
+`domain changed — rebuilding schema`.
