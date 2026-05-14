@@ -53,6 +53,7 @@ development. For production, set them explicitly.
 | Variable | Default | Description |
 |---|---|---|
 | `OOSGQL_PORT` | `4000` | HTTP port |
+| `OOSGQL_HOST` | `localhost` | Listen address (`0.0.0.0` required in Kubernetes) |
 | `OOSGQL_PG_URL` | `postgres://postgres:demo@localhost:5432/onisin` | Database URL |
 | `OOSGQL_NATS_URL` | `nats://localhost:4222` | NATS URL |
 
@@ -61,11 +62,12 @@ development. For production, set them explicitly.
 | Variable | Default | Description |
 |---|---|---|
 | `OOSAI_PORT` | `4100` | HTTP port |
-| `OOSAI_PG_URL` | `postgres://postgres:demo@localhost:5432/inisin` | Database URL |
+| `OOSAI_HOST` | `localhost` | Listen address (`0.0.0.0` required in Kubernetes) |
+| `OOSAI_PG_URL` | `postgres://postgres:demo@localhost:5432/onisin` | Database URL |
 | `OOSAI_NATS_URL` | `nats://localhost:4222` | NATS URL |
-| `OOSAI_EMBED_URL` | `http://localhost:11434` | Ollama base URL |
+| `OOSAI_EMBED_URL` | `http://localhost:11434/v1` | Ollama base URL |
 | `OOSAI_EMBED_MODEL` | `granite-embedding:latest` | Embedding model |
-| `OOSAI_GQL_URL` | `http://localhost:4000` | oosgql base URL |
+| `OOSAI_EMBED_KEY` | _(empty)_ | API key — leave empty for local Ollama |
 
 ## Startup order
 
@@ -136,3 +138,34 @@ installed. Re-run Install demo tables and data with oosai running.
 **oosgql schema is stale** — a domain was saved but oosgql did not
 rebuild. Check that NATS is running and that oosgql logged
 `domain changed — rebuilding schema`.
+
+## Non-default local setup
+
+The defaults assume everything runs on `localhost` with the demo
+credentials. A fresh checkout requires no configuration at all in that
+case. If your setup differs, copy the `.env.example` files and adjust:
+
+```bash
+cp apps/oosgql/.env.example apps/oosgql/.env
+cp apps/oosai/.env.example  apps/oosai/.env
+```
+
+Then edit the values you need to change. Bun loads `.env` automatically
+when you run `bun run dev`. The `.env` files are listed in `.gitignore`
+and must never be committed.
+
+Typical reasons to override defaults:
+
+| Situation | Variable to set |
+|---|---|
+| Postgres on a different host or port | `OOSGQL_PG_URL`, `OOSAI_PG_URL` |
+| Postgres with different credentials | same, full URL |
+| NATS on a non-standard port | `OOSGQL_NATS_URL`, `OOSAI_NATS_URL` |
+| Ollama on a different machine | `OOSAI_EMBED_URL` |
+| Commercial embedding API (OpenAI etc.) | `OOSAI_EMBED_URL`, `OOSAI_EMBED_KEY` |
+| Running oosgql/oosai on non-default ports | `OOSGQL_PORT`, `OOSAI_PORT` |
+
+> **Note for Kubernetes deployments:** `OOSGQL_HOST` and `OOSAI_HOST`
+> must be set to `0.0.0.0` so readiness probes can reach the container.
+> The Helm chart and the raw manifests already handle this. Do not set
+> these in your local `.env` — `localhost` is correct for local dev.
