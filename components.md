@@ -44,9 +44,10 @@ embedding pipeline.
 ### Boot sequence
 
 1. Load config (`OOSAI_*` env vars, sane defaults for development).
-2. Connect to PostgreSQL and Ollama.
+2. Connect to PostgreSQL and the configured LLM provider (any
+   OpenAI-compatible API — Ollama, vLLM, OpenAI, Anthropic via a proxy).
 3. Run backfill — re-embed all domains, views and global prompts.
-4. Start notify listeners — react to domain/view/prompt changes.
+4. Start NATS subscribers — react to domain/view/prompt changes.
 5. Start event listeners — one NATS subject per active event mapping.
 6. Start the Hono HTTP server (internal health only).
 7. Start the NATS command handler.
@@ -84,17 +85,23 @@ embedding pipeline.
 |---|---|
 | `oos.cmd.event_type_grammar.list` | List all event type grammars |
 | `oos.cmd.event_type_grammar.load` | Load one grammar by name |
-| `oos.cmd.event_type_grammar.save` | Save a grammar |
+| `oos.cmd.event_type_grammar.save` | Save a grammar source |
+| `oos.cmd.event_type_grammar.save_tags` | Save the context tags of a grammar |
+| `oos.cmd.event_type_grammar.insert` | Insert an empty grammar (new name) |
 | `oos.cmd.event_type_grammar.delete` | Delete a grammar |
 | `oos.cmd.event_streams.list` | List streams, optionally by mapping |
 | `oos.cmd.event_streams.create` | Create a stream |
-| `oos.cmd.event_streams.delete` | Delete a stream |
+| `oos.cmd.event_streams.delete` | Delete a stream and cascade source rows + embeddings |
 | `oos.cmd.event_mappings.list` | List event mappings |
 | `oos.cmd.event_mappings.set_types` | Set accepted event types for a mapping |
-| `oos.cmd.event.insert` | Insert an event and trigger embedding |
+| `oos.cmd.event.insert` | Insert an event, resolve close-policy, fan out for embedding |
+| `oos.cmd.event.update` | Update text + payload of an open event, re-embed |
+| `oos.cmd.event.delete` | Delete an open event and its embedding |
+| `oos.cmd.event.close` | Flip an open event to closed (one-way, immutable after) |
 | `oos.cmd.event.search` | Cosine search over embedded events |
 | `oos.cmd.event.schemas` | Return tag-filtered event type grammars |
 | `oos.cmd.event.stream_events` | Return event history for a stream |
+| `oos.cmd.event.refresh` | Re-read mappings, subscribe new event subjects |
 
 **GraphQL proxy:**
 
@@ -122,16 +129,18 @@ gateway and a React UI.
 |---|---|
 | Domain | Edit `.domain` DSL files with Monaco and live diagnostics |
 | View | Edit `.view` DSL files |
+| Events | Authoring panel for event sources and demo data |
 | Event Types | Grammar library — language rules for event classification |
 | Mapping Types | Which event types each mapping accepts |
-| Settings | NATS URL, LLM endpoint, model picker |
-| Demo | Install the internal schema and demo dataset |
+| Settings | Connection (NATS), Database (DSN), Install schema, LLM endpoint |
+| Demo | Install demo tables, police events, support events, pipeline data |
 
 **Settings (stored as `oosd-settings-v2`):**
 
 ```ts
 {
   natsUrl: string   // default: nats://localhost:4222
+  dbUrl:   string   // PostgreSQL DSN for the install / demo tabs
 }
 ```
 

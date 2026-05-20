@@ -40,7 +40,7 @@ backed by its own ReAct agent that understands the DSL.
 oos  ──NATS──▶ oosai  ──DB──▶  PostgreSQL + pgvector
 oosd ──NATS──▶ oosai
                oosai  ──HTTP──▶ oosgql  (GQL proxy)
-               oosai  ──Embed──▶ Ollama (embedding model)
+               oosai  ──Embed──▶ LLM provider (OpenAI-compatible API)
 oosgql  ──DB──▶  PostgreSQL
 ```
 
@@ -67,8 +67,8 @@ A developer edits `customer.domain` in oosd and saves it. What happens:
 1. oosd sends `oos.cmd.domain.save` via NATS to oosai.
 2. oosai writes the new source to `oos.domain` in the database.
 3. oosai publishes `oos.domain.changed`.
-4. oosai's notify listener picks up the change and re-embeds the domain chunk.
-5. oosgql's notify listener picks up the change and rebuilds the GraphQL schema.
+4. oosai's NATS subscriber picks up the change and re-embeds the domain chunk.
+5. oosgql's NATS subscriber picks up the change and rebuilds the GraphQL schema.
 
 The running oos client picks up the fresh schema on its next query.
 
@@ -83,11 +83,17 @@ Internal tables live in the `oos` schema:
 | `oos.domain` | Domain DSL sources |
 | `oos.view` | View DSL sources |
 | `oos.global_prompt` | Standing instructions injected into every LLM system prompt |
-| `oos.event_type_grammar` | Grammar rules for event classification |
-| `oos.event_mappings` | Which event sources are active and which event types they accept |
-| `oos.event_streams` | Named event streams with context tags |
 | `oos.oos_domain_schema` | Embedded domain chunks (pgvector) |
 | `oos.oos_global_schema` | Embedded global prompt chunks (pgvector) |
+
+The event system uses the `public` schema so the registry sits next to
+the user-owned source tables it points at:
+
+| Table | Purpose |
+|---|---|
+| `public.event_type_grammar` | Grammar rules for event classification |
+| `public.event_mappings` | Which event sources are active and which event types they accept |
+| `public.event_streams` | Named event streams with context tags |
 
 Application data lives in the `public` schema — whatever tables your
 domain definitions point to.
